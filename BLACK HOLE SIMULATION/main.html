@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Black Hole Simulation</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: radial-gradient(ellipse at center, #0f0f23 0%, #000000 70%);
+            color: white;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+        }
+        
+        canvas {
+            display: block;
+            cursor: grab;
+        }
+        
+        canvas:active {
+            cursor: grabbing;
+        }
+        
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #333;
+        }
+        
+        .info-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #333;
+            max-width: 300px;
+            font-size: 12px;
+        }
+        
+        .slider-group {
+            margin: 10px 0;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #ccc;
+        }
+        
+        input[type="range"] {
+            width: 150px;
+            margin-right: 10px;
+        }
+        
+        .legend {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #333;
+            font-size: 11px;
+        }
+        
+        .color-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        
+        .warning {
+            color: #ff6b6b;
+            font-weight: bold;
+        }
+        
+        .safe {
+            color: #51cf66;
+        }
+        
+        .danger {
+            color: #ffd43b;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    
+    <div class="controls">
+        <h3>Black Hole Controls</h3>
+        <div class="slider-group">
+            <label>Black Hole Mass: <span id="massValue">10</span> Solar Masses</label>
+            <input type="range" id="massSlider" min="1" max="100" value="10">
+        </div>
+        <div class="slider-group">
+            <label>Time Dilation Factor: <span id="timeValue">1.0</span>x</label>
+            <input type="range" id="timeSlider" min="0.1" max="3" step="0.1" value="1">
+        </div>
+        <div class="slider-group">
+            <label>Particle Density: <span id="densityValue">500</span></label>
+            <input type="range" id="densitySlider" min="100" max="1000" step="50" value="500">
+        </div>
+        <button id="resetBtn">Reset Simulation</button>
+    </div>
+    
+    <div class="info-panel">
+        <h3>Physics Information</h3>
+        <div id="physicsInfo">
+            <p><strong>Schwarzschild Radius:</strong> <span id="schwarzschild">59.5 km</span></p>
+            <p><strong>Photon Sphere:</strong> <span id="photonSphere">89.3 km</span></p>
+            <p><strong>ISCO:</strong> <span id="isco">119.1 km</span> (Innermost Stable Circular Orbit)</p>
+            <p><strong>Tidal Forces:</strong> <span id="tidalForce">Extreme</span></p>
+            <p><strong>Time Dilation at Event Horizon:</strong> ∞</p>
+            <p><strong>Hawking Radiation:</strong> <span id="hawkingTemp">6.17 × 10⁻⁹ K</span></p>
+        </div>
+        <div class="warning">
+            <p><strong>Inside Event Horizon:</strong></p>
+            <ul>
+                <li>Space and time coordinates swap</li>
+                <li>All paths lead to singularity</li>
+                <li>Information paradox occurs</li>
+                <li>Infinite tidal stretching</li>
+            </ul>
+        </div>
+    </div>
+    
+    <div class="legend">
+        <h4>Legend</h4>
+        <p><span class="color-dot" style="background: #000;"></span>Event Horizon (Point of No Return)</p>
+        <p><span class="color-dot" style="background: #ff6b6b;"></span>Photon Sphere (Light Orbits)</p>
+        <p><span class="color-dot" style="background: #ffd43b;"></span>ISCO (Last Stable Orbit)</p>
+        <p><span class="color-dot" style="background: #51cf66;"></span>Safe Zone</p>
+        <p><span class="color-dot" style="background: #ff8c42;"></span>Accretion Disk (Superheated Matter)</p>
+        <p><span class="color-dot" style="background: #8884d8;"></span>Relativistic Jets</p>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        
+        // Physics constants
+        const G = 6.67430e-11;
+        const c = 299792458;
+        const SOLAR_MASS = 1.989e30;
+        
+        // Simulation parameters
+        let blackHoleMass = 10; // Solar masses
+        let timeDilation = 1.0;
+        let particleCount = 500;
+        
+        // Black hole properties
+        let schwarzschildRadius = 0;
+        let photonSphere = 0;
+        let isco = 0;
+        
+        // Particles array
+        let particles = [];
+        let accretionParticles = [];
+        let jets = [];
+        
+        // Mouse interaction
+        let mouseX = canvas.width / 2;
+        let mouseY = canvas.height / 2;
+        let isDragging = false;
+        
+        // Black hole center
+        let bhX = canvas.width / 2;
+        let bhY = canvas.height / 2;
+        
+        class Particle {
+            constructor(x, y, vx, vy, mass = 1, type = 'matter') {
+                this.x = x;
+                this.y = y;
+                this.vx = vx;
+                this.vy = vy;
+                this.mass = mass;
+                this.type = type;
+                this.trail = [];
+                this.maxTrailLength = 50;
+                this.absorbed = false;
+                this.redshift = 1.0;
+                this.properTime = 0;
+                this.coordinateTime = 0;
+            }
+            
+            update() {
+                if (this.absorbed) return;
+                
+                // Distance to black hole
+                const dx = bhX - this.x;
+                const dy = bhY - this.y;
+                const r = Math.sqrt(dx * dx + dy * dy);
+                const rSchwarzschildUnits = r / schwarzschildRadius;
+                
+                // Gravitational force (Newtonian approximation for far field)
+                const force = (G * blackHoleMass * SOLAR_MASS * this.mass) / (r * r + 1);
+                const fx = (dx / r) * force * 0.0001;
+                const fy = (dy / r) * force * 0.0001;
+                
+                // General relativistic corrections
+                if (rSchwarzschildUnits < 10) {
+                    // Strong field regime - add relativistic effects
+                    const correction = 1 + (3 * schwarzschildRadius) / (2 * r);
+                    this.vx += fx * correction * timeDilation;
+                    this.vy += fy * correction * timeDilation;
+                    
+                    // Time dilation effect
+                    this.redshift = Math.sqrt(Math.max(0, 1 - schwarzschildRadius / r));
+                    this.properTime += timeDilation * this.redshift;
+                } else {
+                    this.vx += fx * timeDilation;
+                    this.vy += fy * timeDilation;
+                }
+                
+                // Velocity damping in accretion disk
+                if (rSchwarzschildUnits > 1.5 && rSchwarzschildUnits < 8) {
+                    this.vx *= 0.99;
+                    this.vy *= 0.99;
+                    this.type = 'accretion';
+                }
+                
+                // Update position
+                this.x += this.vx * timeDilation;
+                this.y += this.vy * timeDilation;
+                
+                // Add to trail
+                this.trail.push({x: this.x, y: this.y, redshift: this.redshift});
+                if (this.trail.length > this.maxTrailLength) {
+                    this.trail.shift();
+                }
+                
+                // Check if particle crosses event horizon
+                if (r <= schwarzschildRadius) {
+                    this.absorbed = true;
+                    this.type = 'absorbed';
+                }
+                
+                // Create jets for absorbed matter
+                if (this.absorbed && Math.random() < 0.01) {
+                    createJet(this.x, this.y);
+                }
+            }
+            
+            draw() {
+                if (this.absorbed && this.type !== 'absorbed') return;
+                
+                // Draw trail with redshift effects
+                for (let i = 0; i < this.trail.length - 1; i++) {
+                    const alpha = (i / this.trail.length) * 0.5;
+                    const point = this.trail[i];
+                    
+                    let color;
+                    if (this.type === 'accretion') {
+                        // Hot accretion disk - temperature based on distance
+                        const temp = Math.min(255, 100 + (1 - point.redshift) * 155);
+                        color = `rgba(${temp}, ${temp * 0.6}, ${temp * 0.2}, ${alpha})`;
+                    } else if (this.type === 'absorbed') {
+                        color = `rgba(255, 0, 0, ${alpha * 0.3})`;
+                    } else {
+                        // Normal matter with redshift
+                        const blue = Math.floor(255 * point.redshift);
+                        const red = Math.floor(255 * (1 - point.redshift));
+                        color = `rgba(${red}, ${blue}, ${blue}, ${alpha})`;
+                    }
+                    
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(this.trail[i].x, this.trail[i].y);
+                    ctx.lineTo(this.trail[i + 1].x, this.trail[i + 1].y);
+                    ctx.stroke();
+                }
+                
+                // Draw particle
+                let size, color;
+                if (this.type === 'accretion') {
+                    size = 2 + Math.random();
+                    color = this.redshift > 0.8 ? '#ff8c42' : '#ff6b42';
+                } else if (this.absorbed) {
+                    return; // Don't draw absorbed particles
+                } else {
+                    size = 1.5;
+                    const blue = Math.floor(255 * this.redshift);
+                    const red = Math.floor(255 * (1 - this.redshift));
+                    color = `rgb(${red}, ${blue}, ${blue})`;
+                }
+                
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        
+        class Jet {
+            constructor(x, y, angle) {
+                this.x = x;
+                this.y = y;
+                this.vx = Math.cos(angle) * 5;
+                this.vy = Math.sin(angle) * 5;
+                this.life = 100;
+                this.maxLife = 100;
+            }
+            
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life--;
+            }
+            
+            draw() {
+                const alpha = this.life / this.maxLife;
+                ctx.fillStyle = `rgba(136, 132, 216, ${alpha})`;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        
+        function createJet(x, y) {
+            // Create bipolar jets perpendicular to accretion disk
+            jets.push(new Jet(x, y, -Math.PI / 2)); // Up
+            jets.push(new Jet(x, y, Math.PI / 2));   // Down
+        }
+        
+        function updatePhysics() {
+            // Calculate black hole properties
+            schwarzschildRadius = (2 * G * blackHoleMass * SOLAR_MASS) / (c * c) * 1000; // Convert to pixels
+            photonSphere = schwarzschildRadius * 1.5;
+            isco = schwarzschildRadius * 3; // Simplified for non-rotating black hole
+            
+            // Update display
+            document.getElementById('schwarzschild').textContent = `${(schwarzschildRadius / 1000 * 2.95).toFixed(1)} km`;
+            document.getElementById('photonSphere').textContent = `${(photonSphere / 1000 * 2.95).toFixed(1)} km`;
+            document.getElementById('isco').textContent = `${(isco / 1000 * 2.95).toFixed(1)} km`;
+            document.getElementById('hawkingTemp').textContent = `${(6.17e-8 / blackHoleMass).toExponential(2)} K`;
+            
+            // Update tidal force description
+            const tidalForce = blackHoleMass < 5 ? "Extreme" : blackHoleMass < 20 ? "Very Strong" : "Strong";
+            document.getElementById('tidalForce').textContent = tidalForce;
+        }
+        
+        function initializeParticles() {
+            particles = [];
+            accretionParticles = [];
+            jets = [];
+            
+            // Create random particles around the black hole
+            for (let i = 0; i < particleCount; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const distance = isco * 2 + Math.random() * 300;
+                const x = bhX + Math.cos(angle) * distance;
+                const y = bhY + Math.sin(angle) * distance;
+                
+                // Orbital velocity (simplified)
+                const orbitalSpeed = Math.sqrt((G * blackHoleMass * SOLAR_MASS) / distance) * 0.001;
+                const vx = -Math.sin(angle) * orbitalSpeed + (Math.random() - 0.5) * 0.5;
+                const vy = Math.cos(angle) * orbitalSpeed + (Math.random() - 0.5) * 0.5;
+                
+                particles.push(new Particle(x, y, vx, vy));
+            }
+        }
+        
+        function drawBlackHole() {
+            // Event horizon (pure black)
+            ctx.fillStyle = '#000000';
+            ctx.beginPath();
+            ctx.arc(bhX, bhY, schwarzschildRadius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Photon sphere
+            ctx.strokeStyle = '#ff6b6b';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.arc(bhX, bhY, photonSphere, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // ISCO
+            ctx.strokeStyle = '#ffd43b';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+            ctx.beginPath();
+            ctx.arc(bhX, bhY, isco, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            ctx.setLineDash([]);
+            
+            // Gravitational lensing effect
+            const gradient = ctx.createRadialGradient(bhX, bhY, schwarzschildRadius, bhX, bhY, photonSphere * 2);
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
+            gradient.addColorStop(0.7, 'rgba(100, 100, 255, 0.1)');
+            gradient.addColorStop(1, 'rgba(50, 50, 150, 0.05)');
+            
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(bhX, bhY, photonSphere * 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        function animate() {
+            // Clear canvas
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Update and draw particles
+            particles.forEach(particle => {
+                particle.update();
+                particle.draw();
+            });
+            
+            // Update and draw jets
+            jets = jets.filter(jet => {
+                jet.update();
+                jet.draw();
+                return jet.life > 0;
+            });
+            
+            // Draw black hole last (on top)
+            drawBlackHole();
+            
+            // Add new particles occasionally
+            if (Math.random() < 0.01 && particles.length < particleCount) {
+                const angle = Math.random() * Math.PI * 2;
+                const distance = isco * 3 + Math.random() * 200;
+                const x = bhX + Math.cos(angle) * distance;
+                const y = bhY + Math.sin(angle) * distance;
+                
+                const orbitalSpeed = Math.sqrt((G * blackHoleMass * SOLAR_MASS) / distance) * 0.001;
+                const vx = -Math.sin(angle) * orbitalSpeed;
+                const vy = Math.cos(angle) * orbitalSpeed;
+                
+                particles.push(new Particle(x, y, vx, vy));
+            }
+            
+            requestAnimationFrame(animate);
+        }
+        
+        // Event listeners
+        document.getElementById('massSlider').addEventListener('input', (e) => {
+            blackHoleMass = parseFloat(e.target.value);
+            document.getElementById('massValue').textContent = blackHoleMass;
+            updatePhysics();
+        });
+        
+        document.getElementById('timeSlider').addEventListener('input', (e) => {
+            timeDilation = parseFloat(e.target.value);
+            document.getElementById('timeValue').textContent = timeDilation.toFixed(1);
+        });
+        
+        document.getElementById('densitySlider').addEventListener('input', (e) => {
+            particleCount = parseInt(e.target.value);
+            document.getElementById('densityValue').textContent = particleCount;
+        });
+        
+        document.getElementById('resetBtn').addEventListener('click', () => {
+            initializeParticles();
+        });
+        
+        // Mouse interaction
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                const deltaX = e.clientX - mouseX;
+                const deltaY = e.clientY - mouseY;
+                bhX += deltaX;
+                bhY += deltaY;
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+            }
+        });
+        
+        canvas.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+        
+        // Resize handler
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            bhX = canvas.width / 2;
+            bhY = canvas.height / 2;
+        });
+        
+        // Initialize simulation
+        updatePhysics();
+        initializeParticles();
+        animate();
+    </script>
+</body>
+</html>
